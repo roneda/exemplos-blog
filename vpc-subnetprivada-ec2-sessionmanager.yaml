@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  myVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: 'myVPC'
+  mySubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+        - Key: 'Name'
+          Value: 'mySubnet'
+  AppServer:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      ImageId: ami-08a52ddb321b32a8c
+      InstanceType: t2.micro
+      SubnetId: !Ref mySubnet
+      IamInstanceProfile:
+        !Ref myInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'AppServer'
+  myInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref myIAMRole
+  myIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      RoleName: 'myIAMRole'
+  SSMInterfaceEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      VpcEndpointType: 'Interface'
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcId: !Ref myVPC
+      SubnetIds: 
+        - !Ref mySubnet
+      SecurityGroupIds:
+        - !Ref myVPCEndpointSecurityGroup
+  SSMMessagesInterfaceEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PrivateDnsEnabled: true
+      VpcEndpointType: 'Interface'
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcId: !Ref myVPC
+      SubnetIds: 
+        - !Ref mySubnet
+      SecurityGroupIds:
+        - !Ref myVPCEndpointSecurityGroup            
+  myVPCEndpointSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: VPCEndpointSecurityGroup
+      GroupDescription: 'Allow HTTPS traffic from the VPC'
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt myVPC.CidrBlock    
+  FilaTeste:
+    Type: AWS::SQS::Queue
+    Properties:
+       QueueName: 'FilaTeste'
+      
