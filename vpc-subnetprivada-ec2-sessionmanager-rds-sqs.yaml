@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  DBUsername:
+    Description: Master Username for MySQL database access
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: Master Password MySQL database access
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'    
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - Parameters: 
+          - LatestAmiId
+          - DBUsername
+          - DBPassword
+Resources:
+  myVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: 'myVPC'
+  mySubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+        - Key: 'Name'
+          Value: 'mySubnet1'      
+  mySubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+        - Key: 'Name'
+          Value: 'mySubnet2'
+  JumpServer:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      SubnetId: !Ref mySubnet1
+      SecurityGroupIds:
+        - !GetAtt myJumpServerSecurityGroup.GroupId    
+      IamInstanceProfile:
+        !Ref myInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'JumpServer'
+  myInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref myIAMRole
+  myIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      RoleName: 'myIAMRole'
+  SSMInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      VpcEndpointType: 'Interface'
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcId: !Ref myVPC
+      SubnetIds: 
+        - !Ref mySubnet1
+      SecurityGroupIds:
+        - !Ref myVPCEndpointSecurityGroup
+  SSMMessagesInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      VpcEndpointType: 'Interface'
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcId: !Ref myVPC
+      SubnetIds: 
+        - !Ref mySubnet1
+      SecurityGroupIds:
+        - !Ref myVPCEndpointSecurityGroup
+  SQSInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      VpcEndpointType: 'Interface'
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.sqs'
+      VpcId: !Ref myVPC
+      SubnetIds: 
+        - !Ref mySubnet1
+      SecurityGroupIds:
+        - !Ref myVPCEndpointSecurityGroup        
+  myVPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: VPCEndpointSecurityGroup
+      GroupDescription: 'Allow HTTPS traffic from the VPC'
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !GetAtt myVPC.CidrBlock
+  myJumpServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Allow traffic to RDS'       
+      VpcId: !Ref myVPC
+  myDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Allow traffic from Jump Server'
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !GetAtt myJumpServerSecurityGroup.GroupId  
+  myDBSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "DB Subnet Group"
+      SubnetIds:
+        - !Ref mySubnet1
+        - !Ref mySubnet2
+  myDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: 'myDB'
+      VPCSecurityGroups:
+      - !GetAtt myDBSecurityGroup.GroupId  
+      DBSubnetGroupName: !Ref myDBSubnetGroup
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      StorageType: gp3
+      Engine: MySQL
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      PubliclyAccessible: false
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+    DeletionPolicy: Delete
+  FilaTeste:
+    Type: AWS::SQS::Queue
+    Properties:
+       QueueName: 'FilaTeste'
+Outputs:
+  JumpServerInstanceID:
+    Value: !Ref JumpServer
+  RDSEndpoint:
+    Value: !GetAtt myDB.Endpoint.Address
+  SQSQueueURL:
+    Value: !GetAtt FilaTeste.QueueUrl
+
